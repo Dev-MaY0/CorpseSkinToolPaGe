@@ -73,6 +73,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0 10px; }
 .preview .pn { font-weight: 700; margin-top: 8px; word-break: break-all; }
 .preview .pa { color: var(--sub); font-size: 12px; }
 .preview .placeholder { color: var(--sub); font-size: 13px; }
+.pv-actions { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 10px; }
+.btn-outline { display: inline-flex; align-items: center; gap: 6px; background: #fff; color: var(--blue); border: 1.5px solid var(--blue); border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.btn-outline:hover { background: #eef4fd; }
+.btn-outline svg { width: 15px; height: 15px; flex: none; }
+.pv-actions .link { font-size: 12px; }
+.pv-hint { color: var(--sub); font-size: 11.5px; line-height: 1.5; margin: 2px 0 0; max-width: 168px; }
 
 .notice { background: #fff6e0; border: 1px solid #f0c36d; border-radius: 6px; padding: 10px 12px; font-size: 13px; margin: 0 0 12px; }
 .notice[hidden] { display: none; }
@@ -121,6 +127,8 @@ dialog::backdrop { background: rgba(20, 22, 26, .5); }
   .step1-body { grid-template-columns: 1fr; }
   .preview { min-height: 0; flex-direction: row; gap: 14px; justify-content: flex-start; text-align: left; padding: 10px 14px; }
   .preview canvas { width: 56px; height: 112px; }
+  .pv-actions { align-items: flex-start; }
+  .pv-hint { max-width: none; }
   .btn-blue { width: 100%; }
   .btn-green { font-size: 16px; padding: 13px 14px; }
   .wide-only { display: none; }
@@ -204,6 +212,13 @@ dialog::backdrop { background: rgba(20, 22, 26, .5); }
         <li>このページで、もう一度「スキンをさがす」</li>
       </ol>
       <p>スキン画像（PNG）を持っている人は「スキン画像（PNG）を持っている人は…」から登録することもできます。</p>
+      <h4>■ 昔のスキンが表示されるとき</h4>
+      <p>GeyserMC には「最後に Geyser 対応サーバーに入ったときのスキン」が保存されています。今のスキンにするには、どちらかの方法で。</p>
+      <ul>
+        <li><b>画像で差し替える</b>：一覧でその人を選び、右の「画像で差し替え」から今のスキンのPNGを選ぶ</li>
+        <li><b>GeyserMC を更新する</b>：今のスキンで <code>test.geysermc.org</code> に入り直してから「全員のスキンを取り直す」</li>
+      </ul>
+      <p>画像で差し替えた人は「全員のスキンを取り直す」を押しても上書きされません（戻すときは「自動取得に戻す」）。腕の太さが合っていないときは「腕を「細い」にする」などで切り替えられます。</p>
       <h4>■「頭の部分しかない」と出たとき</h4>
       <p>キャラクタークリエイターで作ったスキンは、頭しか取れないことがあります。その場合は、ワールド設定の実験的機能「ベータ API」をオンにして、「プレイヤーの死体 スキンコピー拡張」も追加すると本人の見た目になります。</p>
       <h4>■ ダウンロードしたファイルのひらきかた</h4>
@@ -222,7 +237,7 @@ dialog::backdrop { background: rgba(20, 22, 26, .5); }
       <p>登録した人とスキン画像は、このブラウザの中にだけ保存されます。通信するのは GeyserMC（<code>api.geysermc.org</code>）とスキン画像のサーバー（<code>textures.minecraft.net</code>）だけです。</p>
     </div>
   </details>
-  <p class="small">プレイヤーの死体アドオン　スキン登録（Web版） Made By MaYo</p>
+  <p class="small">プレイヤーの死体アドオン　スキン登録（Web版）</p>
 </main>
 
 <div id="status" class="info" role="status" aria-live="polite"><span class="dot">i</span><span id="statusText">まずは ① の欄に、Minecraft のユーザー名を入れてください。</span></div>
@@ -638,9 +653,41 @@ async function render(select) {
     const n = document.createElement("div"); n.className = "pn"; n.textContent = sel.name;
     const a = document.createElement("div"); a.className = "pa";
     a.textContent = (sel.slim ? "細い腕" : "ふつうの腕") + (sel.source === "GeyserMC" ? "・自動で取得" : "・画像ファイル");
-    box.append(n, a);
+    box.append(n, a, previewActions(sel));
     pv.appendChild(box);
   }
+}
+
+const ICON_IMAGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M5 17l5-6 4 4 2-2 3 4" stroke-linejoin="round"/><circle cx="16" cy="9" r="1.5" fill="currentColor"/></svg>';
+
+/** 全身プレビューの下のボタン（画像で差し替え・自動取得に戻す・腕の形） */
+function previewActions(p) {
+  const box = document.createElement("div");
+  box.className = "pv-actions";
+  const replace = document.createElement("button");
+  replace.type = "button"; replace.className = "btn-outline"; replace.id = "replaceBtn";
+  replace.innerHTML = ICON_IMAGE + "画像で差し替え";
+  replace.title = "スキン画像（PNG）を選んで、この人の見た目を差し替えます";
+  replace.addEventListener("click", () => choosePng(p.name, true));
+  box.appendChild(replace);
+  if (p.source === "GeyserMC") {
+    const hint = document.createElement("p");
+    hint.className = "pv-hint";
+    hint.textContent = "昔のスキンなら、画像で差し替えできます";
+    box.appendChild(hint);
+  } else {
+    const back = document.createElement("button");
+    back.type = "button"; back.className = "link"; back.textContent = "自動取得に戻す";
+    back.addEventListener("click", () => search(p.name, true));
+    box.appendChild(back);
+  }
+  const arm = document.createElement("button");
+  arm.type = "button"; arm.className = "link";
+  arm.textContent = p.slim ? "腕を「ふつう」にする" : "腕を「細い」にする";
+  arm.title = "腕の太さが合っていないときに切り替えます";
+  arm.addEventListener("click", () => toggleArm(p.name));
+  box.appendChild(arm);
+  return box;
 }
 
 function setStatus(kind, text) {
@@ -700,10 +747,16 @@ async function showSkinError(name, err, offerPng) {
 }
 
 // ---- ① さがす ----
-async function search() {
+async function search(forName, fromPreview) {
   if (busy) return;
-  const name = $("nameInput").value.trim();
+  const name = (typeof forName === "string" ? forName : $("nameInput").value).trim();
   if (!name) { setStatus("warn", "まず ① の欄に、Minecraft のユーザー名を入れてください。"); $("nameInput").focus(); return; }
+  const existing = findPlayer(name);
+  if (existing && existing.source !== "GeyserMC" && !fromPreview) {
+    const r = await ask("画像で登録している人です", `${existing.name} は画像（PNG）で登録されています。\n自動で取得したスキンに置き換えますか？\n（自動で取得したスキンは、昔のスキンのことがあります）`,
+      [{ label: "やめる", value: "no" }, { label: "置き換える", value: "yes", primary: true }]);
+    if (r !== "yes") return;
+  }
   setBusy(true, `「${name}」のスキンをさがしています…`);
   let added = null, error = null;
   try {
@@ -714,20 +767,20 @@ async function search() {
   if (added) {
     $("nameInput").value = "";
     await render(added.name);
-    setStatus("ok", `${added.name} のスキンを登録しました！　次は ② の緑のボタンを押してください。`);
+    setStatus("ok", `${added.name} のスキンを登録しました！　見た目を確認して、② の緑のボタンを押してください。`);
     pulseDownload();
   } else {
     setStatus("warn", `「${name}」のスキンを登録できませんでした。`);
     await showSkinError(name, error instanceof SkinError ? error : new SkinError("Other", "思わぬエラーが起きました。\n" + error), true);
   }
-  $("nameInput").focus();
+  if (!fromPreview) $("nameInput").focus();
 }
 
 // ---- PNG から ----
 let pngTarget = "";
-function choosePng(name) {
+function choosePng(name, replacing) {
   if (busy) return;
-  name = (name || $("nameInput").value).trim();
+  name = (typeof name === "string" && name ? name : $("nameInput").value).trim();
   if (!name) {
     ask("ユーザー名を入れてください", "先に ① の欄に、その人のユーザー名を入れてから押してください。").then(() => $("nameInput").focus());
     return;
@@ -743,14 +796,28 @@ async function onPngChosen() {
   const name = pngTarget;
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    const replaced = !!findPlayer(name);
     const p = addOrUpdate(name, await prepareSkin(bytes, null), "file");
-    $("nameInput").value = "";
+    if ($("nameInput").value.trim().toLowerCase() === name.toLowerCase()) $("nameInput").value = "";
     await render(p.name);
-    setStatus("ok", `${p.name} を画像から登録しました！　次は ② の緑のボタンを押してください。`);
+    setStatus("ok", replaced
+      ? `${p.name} のスキンを画像に差し替えました！　② でダウンロードし直すと反映されます。`
+      : `${p.name} を画像から登録しました！　次は ② の緑のボタンを押してください。`);
     pulseDownload();
   } catch (e) {
     await showSkinError(name, e instanceof SkinError ? e : new SkinError("Other", "画像を読み込めませんでした。\n" + e), false);
   }
+}
+
+// ---- 腕の形 ----
+async function toggleArm(name) {
+  if (busy) return;
+  const p = findPlayer(name);
+  if (!p) return;
+  p.slim = !p.slim;
+  saveState();
+  await render(p.name);
+  setStatus("info", `${p.name} の腕を「${p.slim ? "細い" : "ふつう"}」にしました。② でダウンロードし直すと反映されます。`);
 }
 
 // ---- 削除・取り直し ----
