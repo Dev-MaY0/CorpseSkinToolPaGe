@@ -1,0 +1,2 @@
+# CorpseSkinToolPaGe
+スキン付き死体アドオンのジェネレーター
