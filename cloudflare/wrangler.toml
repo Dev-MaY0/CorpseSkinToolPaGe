@@ -1,0 +1,29 @@
+# =====================================================================
+#  マイクラ統合版ツール（サイト + 近接VC Bot）… Cloudflare Workers 1つで動きます
+#  制作: MaYo (mayo01297)  二次配布禁止
+#
+#  ・public/ … サイト（トップ・死体スキン・近接VC・設定ページ）
+#  ・src/    … 近接VC の Discord Bot
+#  デプロイしたら https://<この Worker の URL>/setup/ を開いて、
+#  Discord の Bot のトークンを貼るだけで設定が終わります（くわしくは DEPLOY.md）。
+# =====================================================================
+name = "mayo-mc-tools"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# サイトのファイル
+[assets]
+directory = "./public"
+
+[vars]
+# ふつうは変えない
+DISCORD_API = "https://discord.com/api/v10"
+
+# Discord サーバー（ギルド）ごとに 1 つずつ作られる部屋
+[[durable_objects.bindings]]
+name = "GUILD"
+class_name = "GuildRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GuildRoom"]
