@@ -29,6 +29,7 @@ ul.tries li { padding: 6px 8px; border-bottom: 1px dashed var(--line); border-ra
 ul.tries li:last-child { border-bottom: 0; }
 ul.tries li.new { background: #fff7d6; }
 ul.tries .t { color: var(--sub); font-size: 12.5px; margin-right: 6px; }
+ul.tries .d { color: var(--sub); font-size: 12px; overflow-wrap: anywhere; }
 .empty { color: var(--sub); font-size: 14px; margin: 0; }
 .hint { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: #eef4fd; font-size: 14px; }
 .hint.warn { background: #fff2e0; }
@@ -118,6 +119,7 @@ async function load() {
     if (x.t >= opened + skew - 2000) li.className = "new";
     const t = document.createElement("span"); t.className = "t"; t.textContent = ago(now - x.t);
     li.append(t, x.text + (x.scheme === "https" ? "（wss://）" : x.scheme === "http" ? "（ws://）" : ""));
+    if (x.detail) { const dd = document.createElement("div"); dd.className = "d"; dd.textContent = x.detail; li.appendChild(dd); }
     ul.appendChild(li);
   }
   $("empty").hidden = !!(d.tries && d.tries.length);
@@ -126,7 +128,7 @@ async function load() {
   hint.hidden = false; hint.className = "hint";
   if (d.mode === "ws") hint.textContent = "うまくいっています。Minecraft のチャットに「[近接VC] … とつながりました」が出ていれば完成です。";
   else if (!fresh.length) hint.textContent = "このページをひらいてから、まだ何も届いていません。Minecraft でコマンドを送ると、数秒でここに出ます。出なければ ③ を見てください。";
-  else if (fresh.some(x => x.kind === "close" || x.kind === "error")) { hint.className = "hint warn"; hint.textContent = "Bot までは届いていますが、すぐ切れています。Minecraft の「暗号化された WebSocket を要求」をオフにして、Minecraft をひらき直してから、もう一度送ってください。"; }
+  else if (fresh.some(x => x.kind === "close" || x.kind === "error")) { hint.className = "hint warn"; hint.textContent = "Bot までは届いていますが、すぐ切れています。記録の「切れました」の行と、その下の灰色の行（Minecraft が送ってきた条件）を見ると、原因が分かります。スクリーンショットを残しておいてください。"; }
   else if (fresh.some(x => x.kind === "noupgrade")) { hint.className = "hint warn"; hint.textContent = "Bot までは届いていますが、とちゅうで WebSocket の形がこわされています。wss:// のほうを試すか、ちがう回線で試してください。"; }
   else hint.textContent = "Bot まで届いています。";
 }

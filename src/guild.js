@@ -63,6 +63,28 @@ const DIRECTORY = "__directory__";
 
 const quoteName = name => `"${String(name).replace(/["\\]/g, "")}"`;
 
+/**
+ * WebSocket の close コードを、人が読める形に。
+ * 4999 より大きい値は規格にないコード。Minecraft は 1002 を逆のバイト順で送ってくることがあり、
+ * そのとき 59907（0xEA03）になる → バイトを入れかえて元のコードも出す。
+ */
+const CLOSE_NAMES = {
+  1000: "正常に終了", 1001: "相手が終了した", 1002: "プロトコルエラー（WebSocket のやりとりの形が合わない）",
+  1003: "受け取れない種類のデータ", 1005: "コードなし", 1006: "回線が切れた", 1007: "文字コードのエラー",
+  1008: "ポリシー違反", 1009: "メッセージが大きすぎる", 1010: "必要な拡張機能がない", 1011: "相手側のエラー",
+  4000: "別のワールドがつながった", 4001: "接続キーが変わった", 4002: "暗号化のエラー",
+};
+export function describeClose(code) {
+  const n = Number(code);
+  if (!Number.isInteger(n)) return { base: null, text: `接続エラー${code && code !== "error" ? `（${code}）` : ""}` };
+  if (n > 4999 && n <= 0xffff) {
+    const swapped = ((n & 0xff) << 8) | (n >> 8);
+    if (swapped >= 1000 && swapped <= 4999)
+      return { base: swapped, text: `コード ${n}＝バイト順を戻すと ${swapped}: ${CLOSE_NAMES[swapped] || "その他"}` };
+  }
+  return { base: n, text: `コード ${n}${CLOSE_NAMES[n] ? `: ${CLOSE_NAMES[n]}` : ""}` };
+}
+
 function ago(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   return s < 60 ? `${s}秒前` : s < 3600 ? `${Math.round(s / 60)}分前` : `${Math.round(s / 3600)}時間前`;
@@ -100,6 +122,8 @@ export class GuildRoom {
   async noteTry(entry) {
     this.tries = [{ t: Date.now(), ...entry }, ...(this.tries || [])].slice(0, MAX_TRIES);
     await this.storage.put("tries", this.tries);
+    // Cloudflare のログ（ダッシュボードの「ログ」→ リアルタイム）にも出す。接続コード・キーは出さない
+    console.log(JSON.stringify({ ev: "mc_" + (entry.kind || "note"), guild: this.cfg?.guildId || "", scheme: entry.scheme || "", text: entry.text, detail: entry.detail || "" }));
   }
 
   /** 記録を、人が読める 1 行に */
@@ -230,13 +254,19 @@ export class GuildRoom {
     const offered = (request.headers.get("Sec-WebSocket-Protocol") || "").split(",").map(s => s.trim());
     const canEnc = offered.includes(WS_ENCRYPT_PROTOCOL);
     const wantEnc = canEnc && !(this.encBrokenUntil > Date.now());
+    // つながらないときの調査用に、Minecraft が送ってきた WebSocket の条件を記録する（秘密の情報は入らない）
+    // 圧縮の希望（Sec-WebSocket-Extensions）は DO には届かないので、入口（index.js）が ext に入れて渡している
+    const ext =(request.headers.get("Sec-WebSocket-Extensions") || new URL(request.url).searchParams.get("ext") || "").slice(0, 120);
+    const ua = (request.headers.get("User-Agent") || "").slice(0, 80);
+    const ver = (request.headers.get("Sec-WebSocket-Version") || "").slice(0, 8);
+    const detail = `拡張: ${ext || "なし"}・サブプロトコル: ${offered.filter(Boolean).join(", ") || "なし"}・版: ${ver || "?"}${ua ? `・UA: ${ua}` : ""}`;
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server, ["mc"]);
-    server.serializeAttachment({ init: false, since: Date.now(), wantEnc, scheme });
+    server.serializeAttachment({ init: false, since: Date.now(), wantEnc, scheme, sent: 0, recv: 0 });
     this.bdsMode = false;
     this.poll = null;
-    await this.noteTry({ kind: "open", text: `✓ Minecraft から接続がきました${canEnc ? "（暗号化あり）" : ""}`, scheme });
+    await this.noteTry({ kind: "open", text: `✓ Minecraft から接続がきました${canEnc ? "（暗号化あり）" : ""}`, scheme, detail });
     await this.storage.setAlarm(Date.now() + 300); // 最初の設定は少し待ってから送る
     const headers = canEnc ? { "Sec-WebSocket-Protocol": WS_ENCRYPT_PROTOCOL } : {};
     return new Response(null, { status: 101, webSocket: client, headers });
@@ -246,20 +276,24 @@ export class GuildRoom {
   rawSend(ws, obj) {
     const text = JSON.stringify(obj);
     const a = this.att(ws);
+    a.sent = (a.sent || 0) + 1; // 切れたときに「いくつ送ったあとか」が分かるように
     if (a.enc) {
       const data = encryptText(a.enc, text);
       this.setAtt(ws, a);
       ws.send(data);
     } else {
+      this.setAtt(ws, a);
       ws.send(text);
     }
   }
 
   /** Minecraft から届いたものを文字にする（暗号化されていたら復号）。順番が大事なので await の前に呼ぶ */
   decodeIncoming(ws, message) {
+    const a = this.att(ws);
+    a.recv = (a.recv || 0) + 1;
+    this.setAtt(ws, a);
     if (typeof message === "string") return message;
     const bytes = new Uint8Array(message);
-    const a = this.att(ws);
     if (a.enc) {
       const text = decryptBytes(a.enc, bytes);
       this.setAtt(ws, a);
@@ -332,7 +366,7 @@ export class GuildRoom {
       mode: this.liveMode(),
       encrypted: !!(a && a.enc),
       ready: !!(a && a.init),
-      tries: (this.tries || []).map(x => ({ t: x.t, kind: x.kind, text: x.text, scheme: x.scheme || "" })),
+      tries: (this.tries || []).map(x => ({ t: x.t, kind: x.kind, text: x.text, scheme: x.scheme || "", detail: x.detail || "" })),
       now: Date.now(),
     };
   }
@@ -433,27 +467,39 @@ export class GuildRoom {
   }
 
   async webSocketClose(ws, code, reason) {
-    try { ws.close(code, reason); } catch (e) { /* 無視 */ }
-    await this.noteClose(ws, code);
+    // 返事の close は、正しい範囲のコードでしか送れない（範囲外だと例外になる）
+    try { ws.close(code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 ? code : 1000, "bye"); } catch (e) { /* 無視 */ }
+    await this.noteClose(ws, code, reason);
     await this.onSocketGone(ws);
   }
 
-  async webSocketError(ws) {
-    await this.noteClose(ws, "error");
+  async webSocketError(ws, error) {
+    await this.noteClose(ws, "error", String((error && error.message) || error || ""));
     await this.onSocketGone(ws);
   }
 
-  /** 切れたことを記録（すぐ切れたときは、原因のヒントも） */
-  async noteClose(ws, code) {
+  /** 切れたことを記録（どれだけつながっていたか・何件やりとりしたか・コードの意味） */
+  async noteClose(ws, code, reason = "") {
     const a = this.att(ws);
     if (a.closeNoted) return;
     a.closeNoted = true;
     this.setAtt(ws, a);
-    const secs = a.since ? Math.round((Date.now() - a.since) / 1000) : 0;
-    const dur = secs < 60 ? `${secs}秒` : secs < 3600 ? `${Math.round(secs / 60)}分` : `${Math.round(secs / 3600)}時間`;
+    const ms = a.since ? Date.now() - a.since : 0;
+    const dur = ms < 10000 ? `${(ms / 1000).toFixed(2)}秒` : ms < 3600000 ? `${Math.round(ms / 60000)}分` : `${Math.round(ms / 3600000)}時間`;
+    const c = describeClose(code);
+    const traffic = `Bot→MC ${a.sent || 0}件・MC→Bot ${a.recv || 0}件`;
     let hint = "";
-    if (!a.init && secs < 15) hint = "。つながってすぐ切れました（Minecraft の「暗号化された WebSocket を要求」をオフにして、もう一度ためしてください）";
-    await this.noteTry({ kind: "close", text: `切れました（${dur}つながっていました・コード ${code}）${hint}`, scheme: a.scheme });
+    if (!a.init && ms < 15000) {
+      hint = c.base === 1002
+        ? "。Minecraft が WebSocket のやりとりの形を受け付けずに切りました"
+        : "。つながってすぐ切れました";
+    }
+    await this.noteTry({
+      kind: "close",
+      text: `切れました（${dur}・${c.text}）${hint}`,
+      detail: `${traffic}${reason ? `・理由: ${String(reason).slice(0, 60)}` : ""}${a.enc ? "・暗号化中" : ""}`,
+      scheme: a.scheme,
+    });
   }
 
   async onSocketGone(ws) {

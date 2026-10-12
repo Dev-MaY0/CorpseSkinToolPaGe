@@ -40,6 +40,17 @@ const html = (body, status = 200) =>
 
 const room = (env, guildId) => env.GUILD.get(env.GUILD.idFromName(guildId));
 
+/**
+ * Minecraft の WebSocket を、部屋（Durable Object）に渡す。
+ * WebSocket の圧縮（permessage-deflate）は wrangler.toml の compatibility_flags で切ってある。
+ * Minecraft が圧縮を求めてきたかは DO からは見えないので、記録用に ext に入れて渡す。
+ */
+function wsToRoom(stub, request, inner) {
+  const ext = request.headers.get("Sec-WebSocket-Extensions") || "";
+  if (ext) inner.searchParams.set("ext", ext.slice(0, 120));
+  return stub.fetch(new Request(inner, request));
+}
+
 // 設定ボタンの連打よけ（3秒）
 async function recentlyTried(env) {
   const s = await loadStored(env);
@@ -129,6 +140,8 @@ export default {
         ? await (await env.GUILD.get(env.GUILD.idFromName("__directory__")).fetch("https://room/dir/get?code=" + code)).json()
         : { guildId: null };
       if (!dir.guildId) {
+        // コードそのものはログに出さない（長さと形だけ）
+        if (isWs) console.log(JSON.stringify({ ev: "mc_badcode", scheme, len: code.length, format: CODE_RE.test(code) }));
         if (wantJson) return json({ ok: false }, 404);
         if (isBrowser) return html(badCodePage(), 404);
         return new Response("接続コードがちがいます（/vc key で確認してください）", { status: 404 });
@@ -138,7 +151,7 @@ export default {
         const inner = new URL("https://room/ws");
         inner.searchParams.set("code", code);
         inner.searchParams.set("scheme", scheme);
-        return g.fetch(new Request(inner, request));
+        return wsToRoom(g, request, inner);
       }
       if (wantJson) {
         const r = await g.fetch("https://room/diag?code=" + code);
@@ -159,7 +172,7 @@ export default {
       const inner = new URL("https://room/ws");
       inner.searchParams.set("secret", k.secret);
       inner.searchParams.set("scheme", url.protocol.replace(":", ""));
-      return room(env, k.guildId).fetch(new Request(inner, request));
+      return wsToRoom(room(env, k.guildId), request, inner);
     }
 
     // ---- BDS 用 ----
@@ -186,8 +199,10 @@ export default {
     }
 
     // WebSocket なのに、どのURLにも当てはまらない（コマンドのURLのまちがい）
-    if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket")
+    if ((request.headers.get("Upgrade") || "").toLowerCase() === "websocket") {
+      console.log(JSON.stringify({ ev: "mc_badpath", path: path.slice(0, 40) }));
       return new Response("URL がちがいます。/wsserver ws://<この Worker のURL>/v/<接続コード> の形で送ってください（Discord の /vc key で確認できます）", { status: 404 });
+    }
     // それ以外はサイトのファイル（なければ 404 ページ）
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not Found", { status: 404 });
   },
